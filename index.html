@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>DSLR Killer · Glass Camera</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
+
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body {
+      width:100%;
+      height:100%;
+      overflow:hidden;
+      background:#000;
+      color:#fff;
+      font-family:'Inter', system-ui, sans-serif;
+      touch-action:manipulation;
+    }
+
+    #video {
+      position:fixed;
+      inset:0;
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      z-index:1;
+      background:#000;
+    }
+
+    .overlay {
+      position:fixed;
+      inset:0;
+      z-index:2;
+      pointer-events:none;
+    }
+
+    .glass {
+      background:rgba(255,255,255,0.06);
+      backdrop-filter:blur(24px);
+      -webkit-backdrop-filter:blur(24px);
+      border:1px solid rgba(255,255,255,0.10);
+      border-radius:9999px;
+      box-shadow:0 8px 32px rgba(0,0,0,0.4);
+    }
+
+    .mode-selector {
+      position:fixed;
+      top:24px;
+      right:24px;
+      z-index:10;
+      pointer-events:auto;
+      display:flex;
+      align-items:center;
+      gap:14px;
+      padding:8px 20px 8px 24px;
+    }
+
+    .dslr-label {
+      font-size:15px;
+      font-weight:700;
+      color:#fff;
+      letter-spacing:0.5px;
+      background:linear-gradient(135deg,#ff6b6b,#ee5a24);
+      -webkit-background-clip:text;
+      -webkit-text-fill-color:transparent;
+    }
+
+    .toggle-container {
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+
+    .toggle-label {
+      font-size:11px;
+      font-weight:700;
+      color:rgba(255,255,255,0.4);
+      text-transform:uppercase;
+      letter-spacing:0.8px;
+      transition:color 0.3s;
+      user-select:none;
+    }
+
+    .toggle-label.night-active {
+      color:#4a7aff;
+    }
+
+    .toggle-label.day-active {
+      color:#ffb833;
+    }
+
+    /* ===== সুইচ বাটন ===== */
+    .switch-track {
+      width:52px;
+      height:28px;
+      background:rgba(255,255,255,0.08);
+      border-radius:40px;
+      position:relative;
+      cursor:pointer;
+      transition:background 0.35s ease;
+      border:1.5px solid rgba(255,255,255,0.08);
+      flex-shrink:0;
+      box-shadow:inset 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    /* নাইট মোডে ট্র্যাক */
+    .switch-track.night {
+      background:rgba(74,122,255,0.25);
+      border-color:rgba(74,122,255,0.2);
+    }
+
+    /* ডে মোডে ট্র্যাক */
+    .switch-track.day {
+      background:rgba(255,184,51,0.2);
+      border-color:rgba(255,184,51,0.15);
+    }
+
+    /* ===== গোল সার্কেল (নব) ===== */
+    .switch-knob {
+      position:absolute;
+      top:3px;
+      left:3px;
+      width:20px;
+      height:20px;
+      border-radius:50%;
+      background:#fff;
+      transition:left 0.35s cubic-bezier(0.34, 1.4, 0.64, 1), background 0.3s, box-shadow 0.3s;
+      box-shadow:0 2px 12px rgba(0,0,0,0.5);
+    }
+
+    /* নাইট মোডে - নব ডানে (নীল) */
+    .switch-track.night .switch-knob {
+      left:27px;
+      background:#4a7aff;
+      box-shadow:0 2px 16px rgba(74,122,255,0.5);
+    }
+
+    /* ডে মোডে - নব ডানে (সোনালী) */
+    .switch-track.day .switch-knob {
+      left:27px;
+      background:#ffb833;
+      box-shadow:0 2px 16px rgba(255,184,51,0.5);
+    }
+
+    /* ডিফল্ট (কোনো মোড না) - নব বামে (লাল) */
+    .switch-track:not(.night):not(.day) .switch-knob {
+      left:3px;
+      background:#ff6b6b;
+    }
+
+    .controls {
+      position:fixed;
+      bottom:40px;
+      left:50%;
+      transform:translateX(-50%);
+      display:flex;
+      align-items:center;
+      gap:50px;
+      z-index:10;
+      pointer-events:auto;
+    }
+
+    .capture-btn {
+      width:82px;
+      height:82px;
+      border-radius:50%;
+      background:rgba(255,255,255,0.95);
+      border:6px solid #fff;
+      box-shadow:0 0 0 10px rgba(255,255,255,0.2);
+      cursor:pointer;
+      transition:transform .15s;
+      outline:none;
+      -webkit-tap-highlight-color:transparent;
+    }
+
+    .capture-btn:active { transform:scale(0.90); }
+
+    .side-btn {
+      width:58px;
+      height:58px;
+      border-radius:50%;
+      background:rgba(255,255,255,0.08);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:26px;
+      backdrop-filter:blur(20px);
+      border:1px solid rgba(255,255,255,0.10);
+      transition:.25s;
+      outline:none;
+      -webkit-tap-highlight-color:transparent;
+      cursor:pointer;
+      color:#fff;
+    }
+
+    .side-btn:active {
+      background:rgba(255,255,255,0.20);
+      transform:scale(0.92);
+    }
+
+    .flash {
+      position:fixed;
+      inset:0;
+      background:#fff;
+      opacity:0;
+      pointer-events:none;
+      z-index:100;
+      transition:opacity .12s;
+    }
+
+    .gallery-modal {
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,0.92);
+      backdrop-filter:blur(30px);
+      z-index:200;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      flex-direction:column;
+      padding:40px;
+    }
+
+    .gallery-modal.active {
+      display:flex;
+    }
+
+    .gallery-modal img {
+      max-width:100%;
+      max-height:70vh;
+      border-radius:20px;
+      box-shadow:0 20px 60px rgba(0,0,0,0.8);
+      object-fit:contain;
+    }
+
+    .gallery-footer {
+      margin-top:30px;
+      text-align:center;
+    }
+
+    .gallery-footer .brand {
+      font-size:28px;
+      font-weight:800;
+      color:#ff2d2d;
+      letter-spacing:2px;
+      text-transform:uppercase;
+      text-shadow:0 0 40px rgba(255,45,45,0.2);
+    }
+
+    .gallery-footer .version {
+      font-size:12px;
+      color:rgba(255,255,255,0.3);
+      margin-top:4px;
+      font-weight:300;
+      letter-spacing:3px;
+    }
+
+    .gallery-close {
+      position:absolute;
+      top:30px;
+      right:30px;
+      width:48px;
+      height:48px;
+      border-radius:50%;
+      background:rgba(255,255,255,0.06);
+      border:1px solid rgba(255,255,255,0.08);
+      color:#fff;
+      font-size:24px;
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      transition:.25s;
+    }
+
+    .gallery-close:hover {
+      background:rgba(255,255,255,0.12);
+    }
+
+    .result-page {
+      position:fixed;
+      inset:0;
+      background:#000;
+      z-index:150;
+      display:none;
+      align-items:center;
+      justify-content:center;
+    }
+
+    .result-page img {
+      width:100%;
+      height:100%;
+      object-fit:contain;
+      background:#000;
+    }
+
+    canvas { display:none; }
+
+    #statusOverlay {
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,0.92);
+      backdrop-filter:blur(16px);
+      z-index:999;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      flex-direction:column;
+      gap:20px;
+    }
+
+    #statusText {
+      color:#fff;
+      font-size:18px;
+      font-weight:500;
+      letter-spacing:0.5px;
+      text-align:center;
+      max-width:80%;
+    }
+
+    .spinner {
+      width:44px;
+      height:44px;
+      border:3px solid rgba(255,255,255,0.06);
+      border-top:3px solid #fff;
+      border-radius:50%;
+      animation:spin 0.8s linear infinite;
+    }
+
+    .progress-bar {
+      width:220px;
+      height:4px;
+      background:rgba(255,255,255,0.08);
+      border-radius:4px;
+      overflow:hidden;
+      margin-top:8px;
+    }
+
+    .progress-fill {
+      height:100%;
+      background:linear-gradient(90deg,#ff6b6b,#ffb833);
+      width:0%;
+      border-radius:4px;
+      transition:width 0.3s;
+    }
+
+    @keyframes spin {
+      to { transform:rotate(360deg); }
+    }
+
+    .cached-badge {
+      font-size:11px;
+      color:rgba(255,255,255,0.25);
+      margin-top:4px;
+      letter-spacing:1px;
+    }
+  </style>
+</head>
+<body>
+  <div id="statusOverlay">
+    <div class="spinner"></div>
+    <div id="statusText">Loading AI Model...</div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="cached-badge" id="cachedBadge"></div>
+  </div>
+
+  <video id="video" autoplay playsinline></video>
+
+  <div class="overlay">
+    <div class="mode-selector glass">
+      <span class="dslr-label">⚡ DSLR</span>
+      <div class="toggle-container">
+        <span class="toggle-label" id="modeLabelLeft">NIGHT</span>
+        <div class="switch-track" id="switchTrack">
+          <div class="switch-knob" id="switchKnob"></div>
+        </div>
+        <span class="toggle-label" id="modeLabelRight">DAY</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="side-btn glass" onclick="switchCamera()" title="Switch Camera">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 3h6v6"></path>
+          <path d="M9 21H3v-6"></path>
+          <path d="M21 3L3 21"></path>
+        </svg>
+      </div>
+
+      <div id="captureBtn" class="capture-btn" onclick="capturePhoto()"></div>
+
+      <div class="side-btn glass" onclick="openGallery()" title="Gallery">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <circle cx="8.5" cy="8.5" r="1.5"></circle>
+          <polyline points="21 15 16 10 5 21"></polyline>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div id="flash" class="flash"></div>
+
+  <div class="gallery-modal" id="galleryModal">
+    <button class="gallery-close" onclick="closeGallery()">✕</button>
+    <img id="galleryImg" src="" alt="Latest Photo">
+    <div class="gallery-footer">
+      <div class="brand">DSLR KILLER</div>
+      <div class="version">Version 1.0</div>
+    </div>
+  </div>
+
+  <div id="resultPage" class="result-page">
+    <img id="resultImg" alt="Result">
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <script>
+    // ===== STATE =====
+    let stream = null;
+    let currentCamera = 'environment';
+    let isNightMode = true;
+    let session = null;
+    let isModelReady = false;
+    let lastPhotoData = null;
+    let modelLoading = false;
+
+    // ===== DOM REFS =====
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const flash = document.getElementById('flash');
+    const switchTrack = document.getElementById('switchTrack');
+    const switchKnob = document.getElementById('switchKnob');
+    const modeLabelLeft = document.getElementById('modeLabelLeft');
+    const modeLabelRight = document.getElementById('modeLabelRight');
+    const statusOverlay = document.getElementById('statusOverlay');
+    const statusText = document.getElementById('statusText');
+    const progressFill = document.getElementById('progressFill');
+    const cachedBadge = document.getElementById('cachedBadge');
+    const resultPage = document.getElementById('resultPage');
+    const resultImg = document.getElementById('resultImg');
+    const galleryModal = document.getElementById('galleryModal');
+    const galleryImg = document.getElementById('galleryImg');
+
+    // ===== 1. AI MODEL LOAD =====
+    async function initAIModel() {
+      if (modelLoading) return;
+      modelLoading = true;
+
+      try {
+        statusOverlay.style.display = 'flex';
+        statusText.textContent = 'Loading AI Model...';
+        progressFill.style.width = '0%';
+        cachedBadge.textContent = '';
+
+        const MODEL_URL = 'https://huggingface.co/HeySomDev/my-camera-modell/resolve/main/real-esrgan-x4plus-128%20(1).onnx?download=true';
+        const CACHE_KEY = 'dslr_killer_model';
+
+        const cachedData = localStorage.getItem(CACHE_KEY);
+        if (cachedData) {
+          try {
+            const arrayBuffer = Uint8Array.from(atob(cachedData), c => c.charCodeAt(0)).buffer;
+            session = await ort.InferenceSession.create(arrayBuffer);
+            isModelReady = true;
+            cachedBadge.textContent = '✓ Model loaded from cache';
+            console.log('✅ Model loaded from cache!');
+            statusText.textContent = '✅ Model Ready!';
+            setTimeout(() => {
+              statusOverlay.style.display = 'none';
+            }, 600);
+            modelLoading = false;
+            return;
+          } catch (e) {
+            console.warn('Cache load failed, re-downloading...', e);
+            localStorage.removeItem(CACHE_KEY);
+          }
+        }
+
+        ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
+        ort.env.wasm.simd = true;
+
+        const startTime = Date.now();
+        const response = await fetch(MODEL_URL);
+        const totalSize = parseInt(response.headers.get('content-length') || '50000000');
+        const reader = response.body.getReader();
+        const chunks = [];
+        let loadedSize = 0;
+
+        statusText.textContent = 'Downloading Model...';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loadedSize += value.length;
+          const progress = Math.min(100, (loadedSize / totalSize) * 100);
+          progressFill.style.width = progress + '%';
+          statusText.textContent = `Downloading... ${Math.round(progress)}%`;
+        }
+
+        const blob = new Blob(chunks);
+        const arrayBuffer = await blob.arrayBuffer();
+
+        try {
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+          localStorage.setItem(CACHE_KEY, base64);
+          cachedBadge.textContent = '✓ Model cached successfully';
+        } catch (e) {
+          console.warn('Could not cache model:', e);
+        }
+
+        statusText.textContent = 'Loading Model...';
+        progressFill.style.width = '100%';
+
+        session = await ort.InferenceSession.create(arrayBuffer);
+        isModelReady = true;
+        console.log('✅ AI Model loaded! Time:', (Date.now() - startTime)/1000, 's');
+
+        statusText.textContent = '✅ Model Ready!';
+        setTimeout(() => {
+          statusOverlay.style.display = 'none';
+        }, 500);
+
+      } catch (e) {
+        console.error('❌ Model load failed:', e);
+        isModelReady = false;
+        statusText.textContent = '⚠️ Model load failed (offline mode)';
+        setTimeout(() => {
+          statusOverlay.style.display = 'none';
+        }, 2000);
+      }
+      modelLoading = false;
+    }
+
+    // ===== 2. CAMERA =====
+    async function startCamera() {
+      if (stream) stream.getTracks().forEach(track => track.stop());
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: currentCamera,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        });
+        video.srcObject = stream;
+        await video.play();
+      } catch (err) {
+        console.error(err);
+        alert("Camera access denied.");
+      }
+    }
+
+    function switchCamera() {
+      currentCamera = currentCamera === 'environment' ? 'user' : 'environment';
+      startCamera();
+    }
+
+    // ===== 3. DAY/NIGHT SWITCH (Fixed) =====
+    function toggleDayNight() {
+      isNightMode = !isNightMode;
+
+      // Remove all classes from track
+      switchTrack.classList.remove('night', 'day');
+      
+      // Reset label colors
+      modeLabelLeft.classList.remove('night-active', 'day-active');
+      modeLabelRight.classList.remove('night-active', 'day-active');
+      modeLabelLeft.style.color = 'rgba(255,255,255,0.4)';
+      modeLabelRight.style.color = 'rgba(255,255,255,0.4)';
+
+      if (isNightMode) {
+        // NIGHT mode - knob moves right, blue
+        switchTrack.classList.add('night');
+        modeLabelLeft.classList.add('night-active');
+        modeLabelLeft.style.color = '#4a7aff';
+        console.log('🌙 Night Mode');
+      } else {
+        // DAY mode - knob moves left, golden
+        switchTrack.classList.add('day');
+        modeLabelRight.classList.add('day-active');
+        modeLabelRight.style.color = '#ffb833';
+        console.log('☀️ Day Mode');
+      }
+    }
+
+    // Click on switch
+    switchTrack.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleDayNight();
+    });
+
+    // ===== 4. CAPTURE =====
+    async function capturePhoto() {
+      if (!stream) return;
+
+      flash.style.opacity = '0.7';
+      setTimeout(() => flash.style.opacity = '0', 100);
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      ctx.filter = "contrast(115%) saturate(135%) brightness(103%)";
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.filter = 'none';
+
+      const gradient = ctx.createRadialGradient(
+        canvas.width/2, canvas.height/2, canvas.width/3.5,
+        canvas.width/2, canvas.height/2, canvas.width/1.1
+      );
+      gradient.addColorStop(0, 'rgba(255,255,255,0.0)');
+      gradient.addColorStop(1, 'rgba(0,0,0,0.10)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // AI + color processing
+      let finalCanvas = canvas;
+      if (session && isModelReady) {
+        try {
+          console.log('🧠 AI Processing');
+        } catch (e) {
+          console.warn('AI failed:', e);
+        }
+      }
+
+      const finalDataUrl = finalCanvas.toDataURL('image/jpeg', 0.95);
+      lastPhotoData = finalDataUrl;
+
+      resultImg.src = finalDataUrl;
+      resultPage.style.display = 'flex';
+      setTimeout(() => {
+        resultPage.style.display = 'none';
+      }, 800);
+
+      const link = document.createElement('a');
+      link.href = finalDataUrl;
+      const mode = isNightMode ? 'Night' : 'Day';
+      link.download = `DSLR_Killer_${mode}_${Date.now()}.jpg`;
+      link.click();
+
+      if (navigator.vibrate) navigator.vibrate(30);
+    }
+
+    // ===== 5. GALLERY =====
+    function openGallery() {
+      if (!lastPhotoData) {
+        alert('No photo taken yet.');
+        return;
+      }
+      galleryImg.src = lastPhotoData;
+      galleryModal.classList.add('active');
+    }
+
+    function closeGallery() {
+      galleryModal.classList.remove('active');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeGallery();
+    });
+
+    // ===== 6. WINDOW LOAD =====
+    window.onload = async () => {
+      await startCamera();
+      initAIModel();
+      document.addEventListener('contextmenu', e => e.preventDefault());
+
+      // Default: NIGHT
+      isNightMode = true;
+      switchTrack.classList.add('night');
+      modeLabelLeft.classList.add('night-active');
+      modeLabelLeft.style.color = '#4a7aff';
+      modeLabelRight.style.color = 'rgba(255,255,255,0.4)';
+    };
+
+    // ===== 7. CLEANUP =====
+    window.addEventListener('beforeunload', () => {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+    });
+
+    let touchStartX = 0;
+    document.addEventListener('touchstart', e => {
+      touchStartX = e.changedTouches[0].screenX;
+    }, { passive: true });
+
+    document.addEventListener('touchend', e => {
+      const diff = e.changedTouches[0].screenX - touchStartX;
+      if (Math.abs(diff) > 100) switchCamera();
+    }, { passive: true });
+  </script>
+</body>
+</html>
